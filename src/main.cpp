@@ -8,9 +8,10 @@
 #include <EEPROM.h>
 
 // ─── Display ──────────────────────────────────────────────────────────────────
-#define DATA_PIN    5
+#define DATA_PIN    13
 #define NUM_LEDS    256
-#define BRIGHTNESS  20
+
+uint8_t matrixBrightness = 20;  // 1–100, loaded from EEPROM
 
 // ─── Button ───────────────────────────────────────────────────────────────────
 #define BUTTON_PIN    4     // GPIO4 → connect to GND, internal pull-up
@@ -93,7 +94,7 @@ void drawCentered(const char* text, CRGB color, bool bold = true) {
 #define EEPROM_MAGIC 0x42
 char cityName[65] = "";
 
-// layout: [0]=magic  [1..65]=city  [66]=forcePortal
+// layout: [0]=magic  [1..65]=city  [66]=forcePortal  [67]=brightness
 void saveCityName(const char* name) {
     EEPROM.begin(128);
     EEPROM.write(0, EEPROM_MAGIC);
@@ -129,6 +130,20 @@ bool loadForcePortal() {
     bool val = (EEPROM.read(66) == 1);
     EEPROM.end();
     return val;
+}
+
+void saveBrightness(uint8_t val) {
+    EEPROM.begin(128);
+    EEPROM.write(67, val);
+    EEPROM.commit();
+    EEPROM.end();
+}
+
+void loadBrightness() {
+    EEPROM.begin(128);
+    uint8_t val = EEPROM.read(67);
+    EEPROM.end();
+    if (val >= 1 && val <= 100) matrixBrightness = val;
 }
 
 // ─── URL decode ───────────────────────────────────────────────────────────────
@@ -215,11 +230,10 @@ void checkAlerts() {
     if (payload.length() <= 10) {
         // API: no active alerts
         if (cur == ALARM || cur == PRE_ALARM) {
-            next = UNSAFE;                // was alarming → safety window
+            next = UNSAFE;                // was alarming → enter safety window
             unsafeStartMs = millis();
-        } else {
-            next = SAFE;                  // UNSAFE or already SAFE → all clear
         }
+        // UNSAFE stays UNSAFE — waits for explicit "הסתיים" from Oref or safety timeout
     } else {
         JsonDocument doc;
         if (deserializeJson(doc, payload) != DeserializationError::Ok) return;
@@ -242,18 +256,17 @@ void checkAlerts() {
                       cat, ended, cityFound, title.c_str());
 
         if (ended) {
-            if (cityFound) next = SAFE;
+            if (cityFound) next = SAFE;   // Oref confirmed all-clear for our city
         } else if (cityFound) {
             next = (cat == 10) ? PRE_ALARM : ALARM;
             lastAlertTime = millis();
         } else {
             // City not in any active alert
             if (cur == ALARM || cur == PRE_ALARM) {
-                next = UNSAFE;
+                next = UNSAFE;            // alert ended for our city → safety window
                 unsafeStartMs = millis();
-            } else if (cur == UNSAFE) {
-                next = SAFE;            // city cleared from all alerts
             }
+            // UNSAFE stays UNSAFE — waits for explicit "הסתיים" or safety timeout
         }
     }
 
@@ -349,7 +362,7 @@ void setup() {
     pinMode(BUTTON_PIN, INPUT_PULLUP);
 
     FastLED.addLeds<WS2812, DATA_PIN, GRB>(leds, NUM_LEDS);
-    FastLED.setBrightness(BRIGHTNESS);
+    FastLED.setBrightness(matrixBrightness);
 
     // ── Boot sequence (matches original project) ──────────────────────────────
     fill_solid(leds, NUM_LEDS, CRGB(0, 0, 60));  // Blue = booting
@@ -357,6 +370,7 @@ void setup() {
     drawCentered("...", CRGB(0, 0, 60));          // "..." while loading
 
     loadCityName();
+    loadBrightness();
     bool forcePortal = loadForcePortal();
     if (forcePortal) {
         saveForcePortal(false);
@@ -372,13 +386,26 @@ void setup() {
         WiFiManagerParameter cityParam("city", "City Name (Hebrew)", cityName, 64);
         wm.addParameter(&cityParam);
 
-        wm.setSaveParamsCallback([&cityParam]() {
+        char brightnessStr[4];
+        snprintf(brightnessStr, sizeof(brightnessStr), "%d", matrixBrightness);
+        WiFiManagerParameter brightnessParam("brightness", "Brightness (1-100)", brightnessStr, 4,
+                                             "type=\"number\" min=\"1\" max=\"100\"");
+        wm.addParameter(&brightnessParam);
+
+        wm.setSaveParamsCallback([&cityParam, &brightnessParam]() {
             String val = urlDecode(String(cityParam.getValue()));
             val.trim();
             if (val.length() > 0) {
                 val.toCharArray(cityName, 65);
                 saveCityName(cityName);
                 Serial.printf("[Setup] City saved: %s\n", cityName);
+            }
+            int bval = String(brightnessParam.getValue()).toInt();
+            if (bval >= 1 && bval <= 100) {
+                matrixBrightness = (uint8_t)bval;
+                saveBrightness(matrixBrightness);
+                FastLED.setBrightness(matrixBrightness);
+                Serial.printf("[Setup] Brightness saved: %d\n", matrixBrightness);
             }
         });
 
@@ -398,6 +425,7 @@ void setup() {
         }
     }
     // WiFiManager freed here — gives ~20KB back to heap
+    FastLED.setBrightness(matrixBrightness);  // apply saved/updated brightness
 
     Serial.printf("[Setup] WiFi OK. IP: %s  Heap: %d\n",
                   WiFi.localIP().toString().c_str(), ESP.getFreeHeap());

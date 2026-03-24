@@ -19,14 +19,14 @@ No Home Assistant, no external server — just plug in and it works.
 
 ## 🖥️ Alert States
 
-| State | Display | Color | Trigger |
-|-------|---------|-------|---------|
-| **SAFE** | `SAFE` static | 🟢 Green | No active alerts |
-| **PRE ALARM** | `PRE ALARM` scrolling | 🟠 Orange | Incoming threat (cat 10) |
-| **ALARM** | `ALARM` flashing | 🔴 Red | Active alert in your city |
-| **UNSAFE** | `UNSAFE` scrolling | 🔴 Red | Alert ended — safety window |
-| **NO API** | `NO API` scrolling | 🔵 Blue | 5+ consecutive API failures |
-| **BAD CITY** | `BAD CITY` scrolling | 🟣 Magenta | City name not configured |
+| State | Display | Color | Enter when | Exit when |
+|-------|---------|-------|-----------|-----------|
+| **SAFE** | `SAFE` static | 🟢 Green | No active alerts | Alert received |
+| **PRE ALARM** | `PRE ALARM` scrolling | 🟠 Orange | Incoming threat (cat 10) for your city | Alert upgraded or cancelled |
+| **ALARM** | `ALARM` flashing | 🔴 Red | Active alert in your city | Alert ends → UNSAFE |
+| **UNSAFE** | `UNSAFE` scrolling | 🔴 Red | Alert ended (was ALARM/PRE ALARM) | Oref sends explicit all-clear (`הסתיים`) for your city, or 20-min safety timeout |
+| **NO API** | `NO API` scrolling | 🔵 Blue | 5+ consecutive API failures | API recovers |
+| **BAD CITY** | `BAD CITY` scrolling | 🟣 Magenta | City name not configured | Configure via portal |
 
 ---
 
