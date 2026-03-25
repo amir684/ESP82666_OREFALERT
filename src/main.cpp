@@ -238,7 +238,7 @@ void checkAlerts() {
         JsonDocument doc;
         if (deserializeJson(doc, payload) != DeserializationError::Ok) return;
 
-        int    cat   = doc["cat"]   | 0;
+        int    cat   = doc["cat"].as<int>();  // as<int>() handles both string and number from Oref
         String title = doc["title"] | "";
         bool   ended = title.indexOf("הסתיים") >= 0;
 
@@ -303,8 +303,16 @@ void updateDisplay() {
         lastDisplayed = ds;
         scrollX  = 32;
         blinkOn  = false;
-        if (ds == SAFE)  drawCentered("SAFE",  CRGB(0, 80, 0));
-        if (ds == ALARM) drawCentered("ALARM", CRGB(80, 0, 0));
+        lastScrollMs = 0;  // force immediate first draw
+        switch (ds) {
+            case SAFE:      drawCentered("SAFE",      CRGB(0, 80, 0));   break;
+            case ALARM:     drawCentered("ALARM",     CRGB(80, 0, 0));   break;
+            case PRE_ALARM: drawText("PRE ALARM", scrollX, CRGB(255, 80, 0)); break;
+            case UNSAFE:    drawText("UNSAFE",    scrollX, CRGB(80, 0, 0));   break;
+            case NO_API:    drawText("NO API",    scrollX, CRGB(0, 0, 80));   break;
+            case BAD_CITY:  drawText("BAD CITY",  scrollX, CRGB(80, 0, 80));  break;
+            default: break;
+        }
         return;
     }
 
@@ -474,8 +482,8 @@ void loop() {
     }
 
     if (now - lastPollMs >= CHECK_INTERVAL) {
-        lastPollMs = now;
         checkAlerts();
+        lastPollMs = millis();  // set AFTER blocking HTTPS call — ensures 3s gap for display updates
     }
 
     if (alertState == UNSAFE && now - unsafeStartMs >= SAFE_TIMEOUT_MS) {
