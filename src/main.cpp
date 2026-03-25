@@ -395,12 +395,8 @@ void setup() {
 
     // ── WiFiManager in its own scope so memory is freed when done ──────────────
     {
-        WiFi.disconnect(false);  // clear any stale WiFi state
-        delay(200);
-        WiFi.mode(WIFI_STA);  // required on ESP32 before WiFiManager
         WiFiManager wm;
-        wm.setDebugOutput(true);    // print diagnostics to Serial
-        wm.setConfigPortalTimeout(0);  // no timeout — wait indefinitely
+        wm.setConfigPortalTimeout(180);
 
         WiFiManagerParameter cityParam("city", "City Name (Hebrew)", cityName, 64);
         wm.addParameter(&cityParam);
