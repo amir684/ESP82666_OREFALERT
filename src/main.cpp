@@ -21,6 +21,8 @@ CRGB leds[NUM_LEDS];
 
 void setPixel(int x, int y, CRGB color) {
     if (x < 0 || x >= 32 || y < 0 || y >= 8) return;
+    x = 31 - x;  // 180° rotation
+    y = 7  - y;  // 180° rotation
     int panel = x / 8;
     int vcol  = x % 8;
     int vrow  = 7 - y;
@@ -393,9 +395,12 @@ void setup() {
 
     // ── WiFiManager in its own scope so memory is freed when done ──────────────
     {
+        WiFi.disconnect(false);  // clear any stale WiFi state
+        delay(200);
         WiFi.mode(WIFI_STA);  // required on ESP32 before WiFiManager
         WiFiManager wm;
-        wm.setConfigPortalTimeout(180);
+        wm.setDebugOutput(true);    // print diagnostics to Serial
+        wm.setConfigPortalTimeout(0);  // no timeout — wait indefinitely
 
         WiFiManagerParameter cityParam("city", "City Name (Hebrew)", cityName, 64);
         wm.addParameter(&cityParam);
