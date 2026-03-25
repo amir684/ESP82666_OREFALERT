@@ -424,11 +424,10 @@ void setup() {
             }
         });
 
-        wm.setAPCallback([](WiFiManager*) {
-            drawCentered("CONF", CRGB(0, 0, 60));  // CONFIG is 41px > 32px display width
-        });
-
-        drawCentered(forcePortal ? "CONF" : "WIFI", CRGB(0, 0, 60));
+        // No setAPCallback — calling FastLED.show() from inside a WiFiManager
+        // callback crashes the ESP32-C3 WiFi driver (RMT interrupt conflict).
+        // Display is set to "CONF" before autoConnect so the user knows to configure.
+        drawCentered("CONF", CRGB(0, 0, 60));
 
         bool connected = forcePortal
             ? wm.startConfigPortal("RedAlert-Setup")
