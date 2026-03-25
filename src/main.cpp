@@ -1,17 +1,17 @@
 #include <Arduino.h>
 #include <FastLED.h>
-#include <ESP8266WiFi.h>
-#include <ESP8266HTTPClient.h>
+#include <WiFi.h>
+#include <HTTPClient.h>
 #include <WiFiClientSecure.h>
 #include <WiFiManager.h>
 #include <ArduinoJson.h>
-#include <EEPROM.h>
+#include <Preferences.h>
 
 // ─── Display ──────────────────────────────────────────────────────────────────
-#define DATA_PIN    13
+#define DATA_PIN    5
 #define NUM_LEDS    256
 
-uint8_t matrixBrightness = 20;  // 1–100, loaded from EEPROM
+uint8_t matrixBrightness = 20;  // 1–100, loaded from Preferences
 
 // ─── Button ───────────────────────────────────────────────────────────────────
 #define BUTTON_PIN    4     // GPIO4 → connect to GND, internal pull-up
@@ -90,59 +90,51 @@ void drawCentered(const char* text, CRGB color, bool bold = true) {
     drawText(text, (32 - textWidth(text, bold)) / 2, color, bold);
 }
 
-// ─── EEPROM ───────────────────────────────────────────────────────────────────
-#define EEPROM_MAGIC 0x42
+// ─── Preferences (replaces EEPROM) ────────────────────────────────────────────
 char cityName[65] = "";
 
-// layout: [0]=magic  [1..65]=city  [66]=forcePortal  [67]=brightness
 void saveCityName(const char* name) {
-    EEPROM.begin(128);
-    EEPROM.write(0, EEPROM_MAGIC);
-    for (int i = 0; i <= 64; i++) {
-        EEPROM.write(1 + i, (uint8_t)name[i]);
-        if (!name[i]) break;
-    }
-    EEPROM.commit();
-    EEPROM.end();
+    Preferences prefs;
+    prefs.begin("alert", false);
+    prefs.putString("city", name);
+    prefs.end();
 }
 
 void loadCityName() {
-    EEPROM.begin(128);
-    if (EEPROM.read(0) == EEPROM_MAGIC) {
-        for (int i = 0; i < 64; i++) {
-            cityName[i] = (char)EEPROM.read(1 + i);
-            if (!cityName[i]) break;
-        }
-    }
-    EEPROM.end();
-    cityName[64] = '\0';
+    Preferences prefs;
+    prefs.begin("alert", true);
+    String s = prefs.getString("city", "");
+    prefs.end();
+    s.toCharArray(cityName, 65);
 }
 
 void saveForcePortal(bool val) {
-    EEPROM.begin(128);
-    EEPROM.write(66, val ? 1 : 0);
-    EEPROM.commit();
-    EEPROM.end();
+    Preferences prefs;
+    prefs.begin("alert", false);
+    prefs.putBool("portal", val);
+    prefs.end();
 }
 
 bool loadForcePortal() {
-    EEPROM.begin(128);
-    bool val = (EEPROM.read(66) == 1);
-    EEPROM.end();
+    Preferences prefs;
+    prefs.begin("alert", true);
+    bool val = prefs.getBool("portal", false);
+    prefs.end();
     return val;
 }
 
 void saveBrightness(uint8_t val) {
-    EEPROM.begin(128);
-    EEPROM.write(67, val);
-    EEPROM.commit();
-    EEPROM.end();
+    Preferences prefs;
+    prefs.begin("alert", false);
+    prefs.putUChar("bright", val);
+    prefs.end();
 }
 
 void loadBrightness() {
-    EEPROM.begin(128);
-    uint8_t val = EEPROM.read(67);
-    EEPROM.end();
+    Preferences prefs;
+    prefs.begin("alert", true);
+    uint8_t val = prefs.getUChar("bright", 20);
+    prefs.end();
     if (val >= 1 && val <= 100) matrixBrightness = val;
 }
 
@@ -166,40 +158,36 @@ String urlDecode(const String& s) {
 // ─── Alert state ──────────────────────────────────────────────────────────────
 enum AlertState { SAFE, PRE_ALARM, ALARM, UNSAFE, NO_API, BAD_CITY };
 
-AlertState    alertState    = SAFE;
-int           apiFailCount  = 0;
-unsigned long lastAlertTime = 0;
-unsigned long lastPollMs    = 0;
-unsigned long unsafeStartMs = 0;
+// Shared between Core 0 (network) and Core 1 (display).
+// All are 32-bit aligned — reads/writes are atomic on ESP32-C3 RISC-V.
+volatile AlertState alertState    = SAFE;
+volatile int        apiFailCount  = 0;
+volatile uint32_t   lastAlertMs   = 0;
+volatile uint32_t   unsafeStartMs = 0;
 
 #define CHECK_INTERVAL   3000UL
 #define SAFE_TIMEOUT_MS  (20UL * 60 * 1000)
 #define API_FAIL_MAX     5
 
+// ─── Network task (Core 0) ────────────────────────────────────────────────────
 void checkAlerts() {
     if (WiFi.status() != WL_CONNECTED || strlen(cityName) == 0) return;
 
-    // ── Safety timeout — always runs, even if HTTP fails ──────────────────────
-    if (alertState != SAFE && millis() - lastAlertTime > SAFE_TIMEOUT_MS) {
+    // Safety timeouts — checked every poll cycle
+    uint32_t now = millis();
+    if (alertState != SAFE && now - lastAlertMs > SAFE_TIMEOUT_MS) {
         alertState = SAFE;
         Serial.println("[State] safety timeout → SAFE");
         return;
     }
-
-    uint32_t freeHeap = ESP.getFreeHeap();
-    Serial.printf("[Heap] before HTTPS: %d bytes free\n", freeHeap);
-    if (freeHeap < 15000) {
-        // BearSSL needs ~25KB — skip poll to avoid OOM crash
-        Serial.println("[Heap] too low, skipping poll");
-        apiFailCount++;
+    if (alertState == UNSAFE && now - unsafeStartMs >= SAFE_TIMEOUT_MS) {
+        alertState = SAFE;
+        Serial.println("[State] unsafe timeout → SAFE");
         return;
     }
 
-    ESP.wdtFeed();  // feed watchdog before blocking HTTPS call
-
-    BearSSL::WiFiClientSecure client;
+    WiFiClientSecure client;
     client.setInsecure();
-    client.setBufferSizes(4096, 512);
 
     HTTPClient http;
     if (!http.begin(client, "https://www.oref.org.il/warningMessages/alert/Alerts.json")) {
@@ -213,8 +201,7 @@ void checkAlerts() {
     http.setTimeout(5000);
 
     int code = http.GET();
-    ESP.wdtFeed();  // feed watchdog after blocking HTTPS call
-    Serial.printf("[HTTP] code=%d\n", code);
+    Serial.printf("[HTTP] code=%d  heap=%d\n", code, ESP.getFreeHeap());
 
     if (code != HTTP_CODE_OK) {
         apiFailCount++;
@@ -269,7 +256,7 @@ void checkAlerts() {
             if (cityFound) next = SAFE;   // Oref confirmed all-clear for our city
         } else if (cityFound) {
             next = (cat == 10) ? PRE_ALARM : ALARM;
-            lastAlertTime = millis();
+            lastAlertMs = millis();
         } else {
             // City not in any active alert
             if (cur == ALARM || cur == PRE_ALARM) {
@@ -286,7 +273,14 @@ void checkAlerts() {
     }
 }
 
-// ─── Display update ───────────────────────────────────────────────────────────
+void networkTask(void* pvParameters) {
+    for (;;) {
+        checkAlerts();
+        vTaskDelay(pdMS_TO_TICKS(CHECK_INTERVAL));
+    }
+}
+
+// ─── Display update (Core 1 — loop) ───────────────────────────────────────────
 AlertState    lastDisplayed = (AlertState)99;
 int           scrollX       = 32;
 bool          blinkOn       = false;
@@ -298,11 +292,12 @@ unsigned long lastBlinkMs   = 0;
 #define NOAPI_BLINK 600
 
 AlertState computeDisplay() {
-    if (alertState == SAFE) {
+    AlertState as = alertState;
+    if (as == SAFE) {
         if (apiFailCount >= API_FAIL_MAX) return NO_API;
         if (strlen(cityName) == 0)        return BAD_CITY;
     }
-    return alertState;
+    return as;
 }
 
 void updateDisplay() {
@@ -315,8 +310,8 @@ void updateDisplay() {
         blinkOn  = false;
         lastScrollMs = 0;  // force immediate first draw
         switch (ds) {
-            case SAFE:      drawCentered("SAFE",      CRGB(0, 80, 0));   break;
-            case ALARM:     drawCentered("ALARM",     CRGB(80, 0, 0));   break;
+            case SAFE:      drawCentered("SAFE",      CRGB(0, 80, 0));        break;
+            case ALARM:     drawCentered("ALARM",     CRGB(80, 0, 0));        break;
             case PRE_ALARM: drawText("PRE ALARM", scrollX, CRGB(255, 80, 0)); break;
             case UNSAFE:    drawText("UNSAFE",    scrollX, CRGB(80, 0, 0));   break;
             case NO_API:    drawText("NO API",    scrollX, CRGB(0, 0, 80));   break;
@@ -375,17 +370,17 @@ void updateDisplay() {
 // ─── Setup ────────────────────────────────────────────────────────────────────
 void setup() {
     Serial.begin(115200);
-    delay(500);
+    delay(1000);  // USB-CDC needs time to enumerate on cold boot
 
     pinMode(BUTTON_PIN, INPUT_PULLUP);
 
     FastLED.addLeds<WS2812, DATA_PIN, GRB>(leds, NUM_LEDS);
     FastLED.setBrightness(matrixBrightness);
 
-    // ── Boot sequence (matches original project) ──────────────────────────────
+    // ── Boot sequence ──────────────────────────────────────────────────────────
     fill_solid(leds, NUM_LEDS, CRGB(0, 0, 60));  // Blue = booting
     FastLED.show();
-    drawCentered("...", CRGB(0, 0, 60));          // "..." while loading
+    drawCentered("...", CRGB(0, 0, 60));
 
     loadCityName();
     loadBrightness();
@@ -396,7 +391,7 @@ void setup() {
     }
     Serial.printf("[Setup] City: '%s'\n", cityName);
 
-    // ── WiFiManager in its own scope so memory is freed when done ──
+    // ── WiFiManager in its own scope so memory is freed when done ──────────────
     {
         WiFiManager wm;
         wm.setConfigPortalTimeout(180);
@@ -427,7 +422,6 @@ void setup() {
             }
         });
 
-        // Show "CONFIG" when portal opens (AP mode), "WIFI" while connecting
         wm.setAPCallback([](WiFiManager*) {
             drawCentered("CONFIG", CRGB(0, 0, 60));
         });
@@ -442,32 +436,34 @@ void setup() {
             ESP.restart();
         }
     }
-    // WiFiManager freed here — gives ~20KB back to heap
-    FastLED.setBrightness(matrixBrightness);  // apply saved/updated brightness
+    // WiFiManager freed here
+    FastLED.setBrightness(matrixBrightness);
 
     Serial.printf("[Setup] WiFi OK. IP: %s  Heap: %d\n",
                   WiFi.localIP().toString().c_str(), ESP.getFreeHeap());
 
     fill_solid(leds, NUM_LEDS, CRGB(0, 60, 0));  // Green flash = connected
     FastLED.show();
-    drawCentered("OK", CRGB(0, 80, 0));           // "OK" in green
+    drawCentered("OK", CRGB(0, 80, 0));
     delay(1500);
 
-    alertState    = SAFE;
-    lastAlertTime = millis();
-    lastPollMs    = millis(); // delay first poll by 3 seconds
+    alertState  = SAFE;
+    lastAlertMs = millis();
     drawCentered("SAFE", CRGB(0, 80, 0));
+
+    // ── Start network task on Core 0 ───────────────────────────────────────────
+    xTaskCreatePinnedToCore(networkTask, "netTask", 8192, nullptr, 1, nullptr, 0);
 }
 
 // ─── Button state ─────────────────────────────────────────────────────────────
 bool          btnWasPressed = false;
 unsigned long btnPressTime  = 0;
 
-// ─── Loop ─────────────────────────────────────────────────────────────────────
+// ─── Loop (Core 1) ────────────────────────────────────────────────────────────
 void loop() {
     unsigned long now = millis();
 
-    // ── Long-press button → force config portal on next boot ──
+    // ── Long-press button → force config portal on next boot ──────────────────
     bool btnPressed = (digitalRead(BUTTON_PIN) == LOW);
     if (btnPressed && !btnWasPressed) {
         btnPressTime  = now;
@@ -480,7 +476,7 @@ void loop() {
         ESP.restart();
     }
 
-    // ── No WiFi ──
+    // ── No WiFi ───────────────────────────────────────────────────────────────
     if (WiFi.status() != WL_CONNECTED) {
         if (now - lastScrollMs >= SCROLL_MS) {
             lastScrollMs = now;
@@ -489,22 +485,6 @@ void loop() {
         }
         delay(10);
         return;
-    }
-
-    if (now - lastPollMs >= CHECK_INTERVAL) {
-        // If blink is currently "off", redraw so display is visible during the blocking HTTPS call
-        if (!blinkOn) {
-            AlertState ds = computeDisplay();
-            if      (ds == ALARM)  { drawCentered("ALARM",  CRGB(80, 0, 0)); }
-            else if (ds == NO_API) { drawText("NO API", scrollX, CRGB(0, 0, 80)); }
-            blinkOn = true;
-        }
-        checkAlerts();
-        lastPollMs = millis();  // set AFTER blocking HTTPS call — ensures 3s gap for display updates
-    }
-
-    if (alertState == UNSAFE && now - unsafeStartMs >= SAFE_TIMEOUT_MS) {
-        alertState = SAFE;
     }
 
     updateDisplay();

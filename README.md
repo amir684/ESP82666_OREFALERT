@@ -1,6 +1,6 @@
-# 🚨 ESP8266 Oref Alert Matrix
+# 🚨 ESP32-C3 Oref Alert Matrix
 
-A standalone **Israeli Home Front Command (Pikud HaOref)** real-time alert monitor displayed on a 32×8 WS2812B LED matrix, powered by an ESP8266.
+A standalone **Israeli Home Front Command (Pikud HaOref)** real-time alert monitor displayed on a 32×8 WS2812B LED matrix, powered by an ESP32-C3 Super Mini.
 
 No Home Assistant, no external server — just plug in and it works.
 
@@ -13,6 +13,7 @@ No Home Assistant, no external server — just plug in and it works.
 - **Real-time alerts** — polls the official Oref API every 3 seconds
 - **City-specific filtering** — only alerts relevant to your city
 - **Visual alert states** — color-coded scrolling/flashing text
+- **Smooth scrolling** — FreeRTOS dual-core: display on Core 1, network on Core 0
 - **WiFi setup via captive portal** — no code changes needed
 - **Config button** — long-press to re-enter setup mode
 - **20-minute safety timeout** — auto-returns to SAFE if API goes quiet
@@ -36,7 +37,7 @@ No Home Assistant, no external server — just plug in and it works.
 
 | Component | Details |
 |-----------|---------|
-| Microcontroller | ESP8266 (ESP-12E / NodeMCU / Wemos D1) |
+| Microcontroller | ESP32-C3 Super Mini |
 | LED Matrix | 4× WS2812B 8×8 panels connected in series |
 | Display size | 32×8 pixels |
 | Button | Momentary push button (optional) |
@@ -44,14 +45,14 @@ No Home Assistant, no external server — just plug in and it works.
 ### Wiring
 
 ```
-ESP8266 GPIO5  ──────►  LED Matrix DIN  (data)
-ESP8266 GPIO4  ──────►  Button  ──────►  GND  (config, optional)
-ESP8266 3.3V / 5V  ──►  LED Matrix VCC
-ESP8266 GND  ─────────  LED Matrix GND
+ESP32-C3 GPIO5  ──────►  LED Matrix DIN  (data)
+ESP32-C3 GPIO4  ──────►  Button  ──────►  GND  (config, optional)
+ESP32-C3 3.3V / 5V  ──►  LED Matrix VCC
+ESP32-C3 GND  ─────────  LED Matrix GND
 ```
 
 > ⚠️ **Power note:** 256 WS2812B LEDs at full brightness can draw up to 15A.
-> Use a dedicated 5V power supply and connect GND to the ESP8266.
+> Use a dedicated 5V power supply and connect GND to the ESP32-C3.
 
 ### Physical Matrix Orientation
 
@@ -69,9 +70,9 @@ with the USB connector on the **right side** of the assembled display.
 
 ### Assembly Photos
 
-| Back — full assembly | Back — ESP8266 & button | Back — USB connector |
+| Back — full assembly | Back — ESP32-C3 & button | Back — USB connector |
 |:---:|:---:|:---:|
-| ![Full back view](images/back_full_assembly.jpg) | ![ESP8266 and config button](images/back_esp8266_button.jpg) | ![USB connector wiring](images/back_usb_connector.jpg) |
+| ![Full back view](images/back_full_assembly.jpg) | ![ESP32-C3 and config button](images/back_esp8266_button.jpg) | ![USB connector wiring](images/back_usb_connector.jpg) |
 
 ---
 
@@ -101,7 +102,7 @@ pio run --target upload
 1. Power on the device — all LEDs light up **blue**, then `...` → `WIFI`
 2. On your phone, connect to the WiFi network **`RedAlert-Setup`**
 3. A configuration page opens automatically
-4. Enter your **WiFi credentials** and **city name in Hebrew** (e.g. `תל אביב`)
+4. Enter your **WiFi credentials**, **city name in Hebrew** (e.g. `תל אביב`), and **brightness** (1–100)
 5. Save — the device connects and shows green `OK`
 
 ### 4. Done!
@@ -127,9 +128,10 @@ Edit the defines at the top of `src/main.cpp`:
 
 ```cpp
 #define DATA_PIN    5      // GPIO for LED matrix data
-#define BRIGHTNESS  20     // 0–255 (careful with power draw)
 #define BUTTON_PIN  4      // GPIO for config button
 ```
+
+Brightness (1–100) is configured via the web portal and saved persistently.
 
 ---
 
@@ -168,4 +170,4 @@ Apache License 2.0 — Copyright 2026 amir684
 ## 🙏 Inspiration
 
 Based on the original [ESP32-C3 Red Alert](https://github.com/amir684/esp32c3-red-alert) project,
-ported and adapted for ESP8266 with a WS2812B LED matrix display.
+ported and adapted for the ESP32-C3 Super Mini with a WS2812B LED matrix display.
