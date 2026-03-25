@@ -186,7 +186,16 @@ void checkAlerts() {
         return;
     }
 
-    Serial.printf("[Heap] before HTTPS: %d bytes free\n", ESP.getFreeHeap());
+    uint32_t freeHeap = ESP.getFreeHeap();
+    Serial.printf("[Heap] before HTTPS: %d bytes free\n", freeHeap);
+    if (freeHeap < 15000) {
+        // BearSSL needs ~25KB — skip poll to avoid OOM crash
+        Serial.println("[Heap] too low, skipping poll");
+        apiFailCount++;
+        return;
+    }
+
+    ESP.wdtFeed();  // feed watchdog before blocking HTTPS call
 
     BearSSL::WiFiClientSecure client;
     client.setInsecure();
@@ -201,9 +210,10 @@ void checkAlerts() {
     http.addHeader("Referer",          "https://www.oref.org.il/");
     http.addHeader("X-Requested-With", "XMLHttpRequest");
     http.addHeader("Content-Type",     "application/json");
-    http.setTimeout(8000);
+    http.setTimeout(5000);
 
     int code = http.GET();
+    ESP.wdtFeed();  // feed watchdog after blocking HTTPS call
     Serial.printf("[HTTP] code=%d\n", code);
 
     if (code != HTTP_CODE_OK) {
@@ -482,6 +492,13 @@ void loop() {
     }
 
     if (now - lastPollMs >= CHECK_INTERVAL) {
+        // If blink is currently "off", redraw so display is visible during the blocking HTTPS call
+        if (!blinkOn) {
+            AlertState ds = computeDisplay();
+            if      (ds == ALARM)  { drawCentered("ALARM",  CRGB(80, 0, 0)); }
+            else if (ds == NO_API) { drawText("NO API", scrollX, CRGB(0, 0, 80)); }
+            blinkOn = true;
+        }
         checkAlerts();
         lastPollMs = millis();  // set AFTER blocking HTTPS call — ensures 3s gap for display updates
     }
