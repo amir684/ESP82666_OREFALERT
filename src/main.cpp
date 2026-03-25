@@ -104,7 +104,7 @@ void saveCityName(const char* name) {
 
 void loadCityName() {
     Preferences prefs;
-    prefs.begin("alert", true);
+    prefs.begin("alert", false);  // false = create namespace if not exists
     String s = prefs.getString("city", "");
     prefs.end();
     s.toCharArray(cityName, 65);
@@ -119,7 +119,7 @@ void saveForcePortal(bool val) {
 
 bool loadForcePortal() {
     Preferences prefs;
-    prefs.begin("alert", true);
+    prefs.begin("alert", false);
     bool val = prefs.getBool("portal", false);
     prefs.end();
     return val;
@@ -134,7 +134,7 @@ void saveBrightness(uint8_t val) {
 
 void loadBrightness() {
     Preferences prefs;
-    prefs.begin("alert", true);
+    prefs.begin("alert", false);
     uint8_t val = prefs.getUChar("bright", 20);
     prefs.end();
     if (val >= 1 && val <= 100) matrixBrightness = val;
