@@ -169,24 +169,23 @@ void applyState(AlertState state) {
             break;
 
         case PRE_ALARM:
-            setColor(255, 80, 0);       // Orange solid
-            showScroll("PRE ALARM");
+            setColor(150, 47, 0);       // Orange solid
+            showStatic("UNSAFE");
             break;
 
         case ALARM:
             blinkOn = true;
-            setColor(80, 0, 0);         // Red flicker (handled in loop)
-            showStatic("ALARM");
+            setColor(200, 0, 0);        // Red flicker (handled in loop)
+            showStatic("ALERT");
             break;
 
         case UNSAFE:
-            setColor(80, 0, 0);         // Red solid
-            showScroll("UNSAFE");       // 35px wide — scroll instead of static
+            setColor(150, 47, 0);       // Orange solid
+            showStatic("UNSAFE");
             break;
 
         case NO_API:
-            blinkOn = true;
-            setColor(0, 0, 80);         // Blue blink (handled in loop)
+            setColor(0, 0, 80);         // Blue solid
             showScroll("NO API");
             break;
 
@@ -438,14 +437,7 @@ void loop() {
     if (displaySt == ALARM && millis() - lastBlink >= 60) {
         lastBlink    = millis();
         blinkOn      = !blinkOn;
-        currentColor = blinkOn ? CRGB(80, 0, 0) : CRGB::Black;
-        drawText("ALARM", 1, currentColor);   // x=1 centers "ALARM" (29px) on 32px
-    }
-    // Slow blink: NO_API — change scroll color and force redraw
-    if (displaySt == NO_API && millis() - lastBlink >= 600) {
-        lastBlink    = millis();
-        blinkOn      = !blinkOn;
-        currentColor = blinkOn ? CRGB(0, 0, 80) : CRGB::Black;
-        if (isScrolling) drawText(scrollText, scrollOffset, currentColor);
+        currentColor = blinkOn ? CRGB(255, 0, 0) : CRGB::Black;
+        drawText("ALERT", 1, currentColor);
     }
 }
